@@ -23,16 +23,16 @@ userAnswer = [{"mcqId": ObjectId(), "userAnswer": ["B"]}]
 
 
 
-@endpoints.post("v1/test")
+@endpoints.post("/v1/test")
 async def test():
     tests.insert_one(mcqs)
     return {"message": "Test added successfully"}
 
-@endpoints.get("v1/test/{testId}")
-async def get_test(testId: ObjectId):
-    return tests.find_one({"mcqId": testId})
+@endpoints.get("/v1/test/{testId}")
+async def get_test(testId: str):
+    return tests.find_one({"mcqId": ObjectId(testId)})
 
-@endpoints.post("v1/submit-answer")
+@endpoints.post("/v1/submit-answer")
 async def submit_answer():  
     userAnswers.insert_one(userAnswer)
     return {"message": "Answer submitted successfully"}
