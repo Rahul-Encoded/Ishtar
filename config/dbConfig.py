@@ -12,7 +12,8 @@ client = MongoClient(uri, server_api=ServerApi('1'))
 db = client.studs_db
 
 
-collection_name = db["studs_collection"]
+tests = db["tests"]
+userAnswers = db["userAnswers"]
 
 # Send a ping to confirm a successful connection
 try:
