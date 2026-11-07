@@ -1,0 +1,52 @@
+{
+  "title": "01 — Single-Threaded Async Concurrency",
+  "voice": "af_bella",
+  "speed": 1.0,
+  "lead_in_sec": 0.5,
+  "gap_between_cues_sec": 0.75,
+  "tail_out_sec": 1.4,
+  "cues": [
+    {
+      "id": 1,
+      "act": 1,
+      "hold_after_sec": 0.7,
+      "text": "Imagine three users connect to your server at the same time—yet your server runs on only one CPU thread."
+    },
+    {
+      "id": 2,
+      "act": 1,
+      "hold_after_sec": 0.9,
+      "text": "In a blocking server, User A's slow five-second LLM call locks that single thread, forcing User B's quick ping and User C's database query to wait sequentially in line."
+    },
+    {
+      "id": 3,
+      "act": 2,
+      "hold_after_sec": 0.8,
+      "text": "With async, we still use just one CPU thread. When User A hits await, Python saves User A's paused line number and local variables into a one-kilobyte coroutine frame in RAM, freeing the CPU immediately."
+    },
+    {
+      "id": 4,
+      "act": 2,
+      "hold_after_sec": 0.85,
+      "text": "Now free, that exact same thread finishes User B's fast ping first, and starts User C's database query—so requests complete by speed, not arrival order."
+    },
+    {
+      "id": 5,
+      "act": 3,
+      "hold_after_sec": 0.9,
+      "text": "Notice that the database and LLM never touch RAM directly. When the database finishes first, its reply arrives at an OS socket, waking the CPU, which pulls Coroutine C down from RAM—and later does the same for User A."
+    },
+    {
+      "id": 6,
+      "act": 4,
+      "hold_after_sec": 0.95,
+      "text": "This matters even when you are the only human user. After the LLM asks permission to run a tool, your chat coroutine parks in RAM waiting on an approval flag—leaving the CPU free to catch your approve click and wake that coroutine up."
+    },
+    {
+      "id": 7,
+      "act": 5,
+      "hold_after_sec": 1.3,
+      "text": "Under the hood, your network card copies simultaneous bytes straight to RAM via DMA while OS kernel epoll or IOCP wakes Uvicorn in constant time—completing four seconds of overlapping I/O in just two seconds."
+    }
+  ]
+}
