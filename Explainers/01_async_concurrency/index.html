@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>01 — Single-Threaded Async Concurrency</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <!-- Auto-generated offline voiceover bundle (Kokoro-82M int8 · af_bella) -->
+  <script src="./voiceover_bundle.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body.cinema-theme {
+      margin: 0;
+      background-color: #0B0B0A;
+      color: #F4F1EA;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .cinema-wrap {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 20px 24px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .frame-box {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #111110;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid #242320;
+      box-shadow: 0 28px 72px rgba(0, 0, 0, 0.68);
+    }
+    canvas#cinemaStage {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: pointer;
+    }
+    .minimal-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: #161614;
+      border: 1px solid #262522;
+      border-radius: 999px;
+    }
+    button.min-btn, a.min-btn {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: #E8E4DC;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 13px;
+      border-radius: 999px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s ease, color 0.15s ease;
+      white-space: nowrap;
+    }
+    button.min-btn:hover:not(:disabled), a.min-btn:hover {
+      background: #262522;
+    }
+    button.min-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    button.min-btn.play-pill {
+      background: #F4F1EA;
+      color: #111110;
+      font-weight: 600;
+      padding: 6px 18px;
+    }
+    input[type="range"].hairline-scrub {
+      flex: 1;
+      min-width: 140px;
+      accent-color: #F4F1EA;
+      height: 4px;
+      cursor: pointer;
+    }
+    .act-dots {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    button.act-dot {
+      appearance: none;
+      border: 1px solid #33312D;
+      background: transparent;
+      color: #8E8980;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 4px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    button.act-dot:hover, button.act-dot.active {
+      border-color: #F4F1EA;
+      color: #F4F1EA;
+      background: rgba(244, 241, 234, 0.08);
+    }
+    .min-time {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      color: #8A867E;
+      min-width: 96px;
+      text-align: right;
+    }
+  </style>
+</head>
+<body class="cinema-theme">
+  <div class="cinema-wrap">
+    <div class="frame-box">
+      <canvas id="cinemaStage" width="1920" height="1080" aria-label="Minimalist animated explainer of single-threaded async concurrency"></canvas>
+    </div>
+
+    <div class="minimal-bar">
+      <button id="playBtn" class="min-btn play-pill" type="button">▶ Play</button>
+      <div id="actDots" class="act-dots"></div>
+      <input id="scrub" class="hairline-scrub" type="range" min="0" max="101.184" step="0.01" value="0" aria-label="Timeline" />
+      <span id="timeLabel" class="min-time">0:00 / 1:41</span>
+      <button id="ccBtn" class="min-btn" type="button">CC On</button>
+      <button id="muteBtn" class="min-btn" type="button">🔊 Bella</button>
+      <button id="mp4Btn" class="min-btn" type="button">Export MP4</button>
+      <a id="saveLink" class="min-btn play-pill" style="display:none;" download="01_async_concurrency.mp4">Save MP4</a>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================================
+    // 1. CONFIG, PALETTE & VOICE-LOCKED TIMELINE CUES
+    // ============================================================================
+    const PAL = {
+      bg: '#111110',
+      surface: '#181816',
+      ivory: '#F4F1EA',
+      ash: '#827E76',
+      faint: '#2B2A27',
+      coral: '#E57A44',  // Blocking Lock / Sequential Stall
+      jade: '#5EBA8D',   // Free CPU / Out-of-Order Completion
+      indigo: '#8492EE'  // ~1 KB Coroutine Frame in RAM
+    };
+
+    const FALLBACK_CUES = [
+      { id: 1, act: 1, start: 0.500,  voiceEnd: 7.625,  end: 8.325,  text: "Imagine three users connect to your server at the same time—yet your server runs on only one CPU thread." },
+      { id: 2, act: 1, start: 8.325,  voiceEnd: 20.058, end: 20.958, text: "In a blocking server, User A's slow five-second LLM call locks that single thread, forcing User B's quick ping and User C's database query to wait sequentially in line." },
+      { id: 3, act: 2, start: 20.958, voiceEnd: 35.934, end: 36.734, text: "With async, we still use just one CPU thread. When User A hits await, Python saves User A's paused line number and local variables into a one-kilobyte coroutine frame in RAM, freeing the CPU immediately." },
+      { id: 4, act: 2, start: 36.734, voiceEnd: 47.678, end: 48.528, text: "Now free, that exact same thread finishes User B's fast ping first, and starts User C's database query—so requests complete by speed, not arrival order." },
+      { id: 5, act: 3, start: 48.528, voiceEnd: 65.381, end: 66.281, text: "Notice that the database and LLM never touch RAM directly. When the database finishes first, its reply arrives at an OS socket, waking the CPU, which pulls Coroutine C down from RAM—and later does the same for User A." },
+      { id: 6, act: 4, start: 66.281, voiceEnd: 82.046, end: 82.996, text: "This matters even when you are the only human user. After the LLM asks permission to run a tool, your chat coroutine parks in RAM waiting on an approval flag—leaving the CPU free to catch your approve click and wake that coroutine up." },
+      { id: 7, act: 5, start: 82.996, voiceEnd: 98.484, end: 99.784, text: "Under the hood, your network card copies simultaneous bytes straight to RAM via DMA while OS kernel epoll or IOCP wakes Uvicorn in constant time—completing four seconds of overlapping I/O in just two seconds." }
+    ];
+
+    const VO = window.VOICEOVER_DATA || { duration: 101.184, cues: FALLBACK_CUES, wavBase64: null };
+    const DURATION = VO.duration || 101.184;
+    const CUES = VO.cues || FALLBACK_CUES;
+
+    const ACTS = [
+      { label: '1 · Blocking Queue', time: 0.0,    end: 20.958 },
+      { label: '2 · RAM Coroutines', time: 20.958, end: 48.528 },
+      { label: '3 · Socket → CPU → RAM', time: 48.528, end: 66.281 },
+      { label: '4 · 1-User Approval', time: 66.281, end: 82.996 },
+      { label: '5 · DMA & 2s Proof', time: 82.996, end: DURATION }
+    ];
+
+    // ============================================================================
+    // 2. MATH, EASING & MINIMALIST DRAWING PRIMITIVES
+    // ============================================================================
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const invLerp = (a, b, v) => clamp01((v - a) / (b - a || 1e-6));
+    const ease = (t) => {
+      const x = clamp01(t);
+      return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+    };
+
+    function rgba(hex, a) {
+      const c = hex.replace('#', '');
+      return `rgba(${parseInt(c.slice(0, 2), 16)},${parseInt(c.slice(2, 4), 16)},${parseInt(c.slice(4, 6), 16)},${clamp01(a)})`;
+    }
+
+    function drawText(ctx, text, x, y, size, color, weight = 400, align = 'center', mono = false) {
+      ctx.save();
+      ctx.fillStyle = color;
+      const fam = mono
+        ? 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+        : 'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.font = `${weight} ${size}px ${fam}`;
+      ctx.textAlign = align;
+      ctx.fillText(text, x, y);
+      ctx.restore();
+    }
+
+    // Wrap long floating captions into 2 balanced, legible lines at bottom of frame
+    function drawWrappedCaption(ctx, text, x, y, maxWidth, lineHeight, alpha) {
+      if (alpha <= 0.01) return;
+      ctx.save();
+      ctx.globalAlpha = clamp01(alpha);
+      ctx.font = '400 25px ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.fillStyle = PAL.ivory;
+      ctx.textAlign = 'center';
+
+      const words = text.split(' ');
+      const lines = [];
+      let curLine = '';
+      for (const w of words) {
+        const test = curLine ? `${curLine} ${w}` : w;
+        if (ctx.measureText(test).width > maxWidth && curLine) {
+          lines.push(curLine);
+          curLine = w;
+        } else {
+          curLine = test;
+        }
+      }
+      if (curLine) lines.push(curLine);
+
+      const startY = y - ((lines.length - 1) * lineHeight) / 2;
+      lines.forEach((ln, i) => ctx.fillText(ln, x, startY + i * lineHeight));
+      ctx.restore();
+    }
+
+    function drawLine(ctx, x1, y1, x2, y2, color, width = 2, dash = null) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      if (dash) ctx.setLineDash(dash);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawCpuCircle(ctx, cx, cy, r, statusColor, subLabel, spinPhase = 0, locked = false) {
+      ctx.save();
+      // Subtle outer halo
+      ctx.strokeStyle = rgba(statusColor, 0.22);
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r + 8, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Main ring
+      ctx.fillStyle = PAL.bg;
+      ctx.strokeStyle = statusColor;
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      // Orbital arc showing single active worker thread
+      if (!locked) {
+        ctx.strokeStyle = statusColor;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r - 11, spinPhase, spinPhase + Math.PI * 0.85);
+        ctx.stroke();
+      }
+
+      // Single thread core dot
+      ctx.fillStyle = statusColor;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 8.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      drawText(ctx, 'CPU', cx, cy - 16, 15, PAL.ash, 600, 'center', true);
+      drawText(ctx, '1 Thread', cx, cy + 28, 14, PAL.ivory, 500);
+      if (subLabel) {
+        drawText(ctx, subLabel, cx, cy + r + 34, 17, statusColor, 500);
+      }
+      ctx.restore();
+    }
+
+    function drawExternalDial(ctx, cx, cy, r, title, sub, progress01, color) {
+      ctx.save();
+      ctx.fillStyle = PAL.bg;
+      ctx.strokeStyle = PAL.faint;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      if (progress01 > 0.005) {
+        ctx.strokeStyle = progress01 >= 0.995 ? PAL.jade : color;
+        ctx.lineWidth = 4.2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * clamp01(progress01));
+        ctx.stroke();
+      }
+
+      drawText(ctx, title, cx, cy - 2, 18, PAL.ivory, 500);
+      drawText(ctx, sub, cx, cy + 20, 13.5, progress01 >= 0.995 ? PAL.jade : PAL.ash, 500, 'center', true);
+      ctx.restore();
+    }
+
+    function drawCoroutinePill(ctx, cx, cy, w, h, title, detail, color = PAL.indigo, highlight = false) {
+      ctx.save();
+      ctx.fillStyle = rgba(color, highlight ? 0.24 : 0.13);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = highlight ? 2.8 : 2.0;
+      ctx.beginPath();
+      ctx.roundRect(cx - w / 2, cy - h / 2, w, h, 12);
+      ctx.fill();
+      ctx.stroke();
+
+      drawText(ctx, title, cx, cy - (detail ? 5 : -5), 14.5, PAL.ivory, 600, 'center', true);
+      if (detail) {
+        drawText(ctx, detail, cx, cy + 15, 13, color, 500);
+      }
+      ctx.restore();
+    }
+
+    function drawRequestDot(ctx, x, y, color, label, r = 8.5) {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      if (label) {
+        drawText(ctx, label, x, y - 18, 14.5, color, 500);
+      }
+      ctx.restore();
+    }
+
+    // ============================================================================
+    // 3. FIVE VOICE-SYNCHRONIZED CINEMATIC ACTS
+    // ============================================================================
+
+    /**
+     * ACTS 1, 2 & 3 (0.0s -> 66.28s):
+     * Three Users (A, B, C) -> 1 CPU Thread + RAM Coroutine Heap -> External LLM & DB
+     *   - Act 1 (0..20.96s): Blocking locks CPU on User A; User B & C stall in arrival line.
+     *   - Act 2 (20.96..48.53s): Async parks Coroutine A (~1 KB) in RAM; User B finishes 1st! User C parks Coroutine C.
+     *   - Act 3 (48.53..66.28s): External replies hit OS Sockets -> wake CPU -> CPU reaches UP into RAM -> finishes C (2nd), then A (3rd)!
+     */
+    function renderMultiUserActs(ctx, s) {
+      if (s > 66.8) return;
+      const fadeIn = ease(invLerp(0.0, 1.4, s));
+      const fadeOut = 1 - ease(invLerp(65.3, 66.5, s));
+      const alpha = fadeIn * fadeOut;
+      if (alpha <= 0.01) return;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      const userX = 330;
+      const cpuX = 960, cpuY = 500, cpuR = 58;
+      const extX = 1560;
+      const lanes = [
+        { name: 'User A', desc: '5s LLM Request', y: 350 },
+        { name: 'User B', desc: '5ms Fast Ping',  y: 500 },
+        { name: 'User C', desc: '1s DB Query',    y: 650 }
+      ];
+
+      // Quiet connecting tracks from Users -> CPU -> External I/O
+      lanes.forEach((ln) => {
+        drawLine(ctx, userX + 85, ln.y, cpuX - cpuR - 18, cpuY + (ln.y - 500) * 0.25, PAL.faint, 2);
+        drawText(ctx, ln.name, userX, ln.y - 4, 20, PAL.ivory, 500, 'center');
+        drawText(ctx, ln.desc, userX, ln.y + 20, 14, PAL.ash, 400, 'center');
+      });
+
+      drawLine(ctx, cpuX + cpuR + 14, cpuY - 18, extX - 62, 390, PAL.faint, 2);
+      drawLine(ctx, cpuX + cpuR + 14, cpuY + 18, extX - 62, 610, PAL.faint, 2);
+
+      // ---------------- ACT 1: BLOCKING SEQUENTIAL STALL (0..20.96s) ----------------
+      if (s < 20.96) {
+        const enterA = ease(invLerp(8.5, 10.6, s));
+        const isLocked = s >= 10.6;
+        const llmProg = isLocked ? invLerp(10.6, 20.5, s) * 0.75 : 0;
+
+        drawExternalDial(ctx, extX, 390, 50, 'LLM', isLocked ? 'Working...' : '5.0s I/O', llmProg, PAL.coral);
+        drawExternalDial(ctx, extX, 610, 50, 'Database', '1.0s I/O', 0, PAL.ash);
+
+        drawCpuCircle(
+          ctx, cpuX, cpuY, cpuR,
+          isLocked ? PAL.coral : PAL.ivory,
+          isLocked ? 'Locked Waiting on User A' : 'Idle · Ready',
+          s * 2.2,
+          isLocked
+        );
+
+        // Initial poised dots (1.5..8.5s)
+        if (s >= 1.5 && s < 8.5) {
+          lanes.forEach((ln) => drawRequestDot(ctx, userX + 110, ln.y, PAL.ivory, ''));
+        }
+
+        // User A travels into CPU and locks it
+        if (s >= 8.5 && s < 10.6) {
+          const ax = lerp(userX + 110, cpuX - cpuR - 10, enterA);
+          const ay = lerp(350, cpuY - 36, enterA);
+          drawRequestDot(ctx, ax, ay, PAL.coral, 'Req A (5s)');
+        }
+
+        // Barrier Gate + User B & C stuck waiting sequentially!
+        if (s >= 12.2) {
+          const gateX = cpuX - 135;
+          drawLine(ctx, gateX, 395, gateX, 605, PAL.coral, 3.5);
+          drawText(ctx, 'Sequential Queue', gateX - 12, 378, 14, PAL.coral, 500, 'right');
+
+          const pB = ease(invLerp(12.2, 14.2, s));
+          const pC = ease(invLerp(13.2, 15.2, s));
+          const jitter = pB >= 1 ? Math.sin(s * 14) * 2.5 : 0;
+
+          drawRequestDot(ctx, lerp(userX + 110, gateX - 28, pB) + jitter, 500, PAL.coral, pB >= 1 ? 'B (Stuck!)' : 'Req B (5ms)');
+          drawRequestDot(
+            ctx,
+            lerp(userX + 110, gateX - 28, pC) + jitter,
+            lerp(650, 555, pC),
+            PAL.coral,
+            pC >= 1 ? 'C (Waiting...)' : 'Req C (1s)'
+          );
+        }
+      } else {
+        // ---------------- ACTS 2 & 3: ASYNC + RAM COROUTINES + SOCKET WAKEUP ----------------
+        const asyncFade = ease(invLerp(20.96, 22.4, s));
+        const ramY = 185;
+
+        // RAM Coroutine Heap Shelf directly above CPU + Vertical CPU <-> RAM Lookup Tether
+        ctx.save();
+        ctx.globalAlpha *= asyncFade;
+        ctx.strokeStyle = PAL.faint;
+        ctx.fillStyle = rgba(PAL.surface, 0.7);
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(cpuX - 250, ramY - 52, 500, 108, 16);
+        ctx.fill();
+        ctx.stroke();
+
+        drawText(ctx, 'RAM · Paused Coroutine Frames (~1 KB each)', cpuX, ramY - 68, 15, PAL.ash, 500);
+
+        // Explicit CPU <-> RAM Bridge Tether
+        const cpuPullingC = s >= 55.2 && s <= 58.2;
+        const cpuPullingA = s >= 60.8 && s <= 63.6;
+        const tetherHot = (s >= 27.6 && s <= 31.2) || (s >= 42.6 && s <= 45.2) || cpuPullingC || cpuPullingA;
+        drawLine(
+          ctx, cpuX, ramY + 56, cpuX, cpuY - cpuR - 14,
+          tetherHot ? PAL.indigo : PAL.faint,
+          tetherHot ? 3 : 2,
+          tetherHot ? null : [6, 6]
+        );
+        ctx.restore();
+
+        // Whisper-clean 2-line code hint in Act 2 when `await` is introduced
+        if (s >= 24.5 && s < 36.6) {
+          const cAlpha = ease(invLerp(24.5, 25.8, s)) * (1 - ease(invLerp(35.4, 36.6, s)));
+          ctx.save();
+          ctx.globalAlpha *= cAlpha;
+          drawText(ctx, 'reply = await call_llm()   # pauses at line 3', cpuX + 290, ramY - 12, 15, PAL.indigo, 500, 'left', true);
+          drawText(ctx, 'return reply               # resumes later', cpuX + 290, ramY + 16, 15, PAL.ash, 400, 'left', true);
+          ctx.restore();
+        }
+
+        // Act 3 Pedagogical Highlight (48.6..52.8s): Show clearly that RAM and LLM/DB have NO direct wire!
+        if (s >= 48.6 && s < 53.0) {
+          const nAlpha = ease(invLerp(48.6, 49.6, s)) * (1 - ease(invLerp(52.0, 53.0, s)));
+          ctx.save();
+          ctx.globalAlpha *= nAlpha;
+          drawLine(ctx, cpuX + 255, ramY, extX - 55, 365, rgba(PAL.coral, 0.55), 1.8, [7, 7]);
+          drawText(ctx, '✕ No direct RAM ↔ LLM wire (RAM is passive)', (cpuX + 255 + extX - 55) / 2 + 20, 262, 14.5, PAL.coral, 500);
+          ctx.restore();
+        }
+
+        // External LLM (User A: starts 26.5s, finishes 59.8s) & DB (User C: starts 42.5s, finishes 53.2s)
+        const llmProg = s < 26.5 ? 0 : clamp01(invLerp(26.5, 59.8, s));
+        const dbProg = s < 42.5 ? 0 : clamp01(invLerp(42.5, 53.2, s));
+
+        drawExternalDial(ctx, extX, 390, 50, 'LLM', llmProg >= 1 ? 'Done!' : (llmProg > 0 ? 'Cooking...' : '5.0s I/O'), llmProg, PAL.indigo);
+        drawExternalDial(ctx, extX, 610, 50, 'Database', dbProg >= 1 ? 'Done!' : (dbProg > 0 ? 'Cooking...' : '1.0s I/O'), dbProg, PAL.indigo);
+
+        // OS Socket Badges on right side of CPU (visible during Act 3 wakeup demonstration!)
+        if (s >= 51.5) {
+          const sAlpha = ease(invLerp(51.5, 52.8, s));
+          ctx.save();
+          ctx.globalAlpha *= sAlpha;
+          const sock5Hot = s >= 59.8 && s < 62.2;
+          const sock7Hot = s >= 53.2 && s < 56.2;
+          drawText(ctx, 'Socket #5', cpuX + 165, 435, 13.5, sock5Hot ? PAL.jade : PAL.ash, 600, 'center', true);
+          drawText(ctx, 'Socket #7', cpuX + 165, 565, 13.5, sock7Hot ? PAL.jade : PAL.ash, 600, 'center', true);
+          ctx.restore();
+        }
+
+        // Coroutine A Pill: lifts CPU -> RAM (27.6..30.6s), stays in RAM (30.6..61.0s), lowers RAM -> CPU (61.0..62.8s)
+        if (s >= 27.6 && s <= 62.8) {
+          const up = ease(invLerp(27.6, 30.6, s));
+          const down = ease(invLerp(61.0, 62.8, s));
+          const tPos = clamp01(up - down);
+          const ax = lerp(cpuX, cpuX - 118, tPos);
+          const ay = lerp(cpuY, ramY + 4, tPos);
+          drawCoroutinePill(ctx, ax, ay, 212, 56, 'Coroutine A (~1 KB)', 'line 3 · waiting on #5', PAL.indigo, cpuPullingA);
+        }
+
+        // Coroutine C Pill: lifts CPU -> RAM (42.8..45.0s), stays in RAM (45.0..55.4s), lowers RAM -> CPU (55.4..57.2s)
+        if (s >= 42.8 && s <= 57.2) {
+          const up = ease(invLerp(42.8, 45.0, s));
+          const down = ease(invLerp(55.4, 57.2, s));
+          const tPos = clamp01(up - down);
+          const cxPill = lerp(cpuX, cpuX + 118, tPos);
+          const cyPill = lerp(cpuY, ramY + 4, tPos);
+          drawCoroutinePill(ctx, cxPill, cyPill, 212, 56, 'Coroutine C (~1 KB)', 'line 3 · waiting on #7', PAL.indigo, cpuPullingC);
+        }
+
+        // CPU Status Color & Label
+        const servingFast = (s >= 37.2 && s <= 41.2) || cpuPullingC || cpuPullingA;
+        let cpuSub = 'Free · Still Only 1 Thread';
+        if (s >= 25.0 && s < 30.8) cpuSub = 'Parking User A in RAM...';
+        else if (s >= 37.2 && s < 41.2) cpuSub = 'Serving User B Immediately!';
+        else if (s >= 41.5 && s < 45.2) cpuSub = 'Parking User C in RAM...';
+        else if (cpuPullingC) cpuSub = 'Socket #7 Woke CPU → Resuming C!';
+        else if (cpuPullingA) cpuSub = 'Socket #5 Woke CPU → Resuming A!';
+
+        drawCpuCircle(ctx, cpuX, cpuY, cpuR, servingFast ? PAL.jade : PAL.ivory, cpuSub, s * 2.5, false);
+
+        // Moving Packets across Act 2 & Act 3:
+        // 1) User A enters (25.0..27.4s)
+        if (s >= 25.0 && s < 27.4) {
+          const u = ease(invLerp(25.0, 27.4, s));
+          drawRequestDot(ctx, lerp(userX + 110, cpuX - cpuR, u), lerp(350, cpuY - 30, u), PAL.indigo, 'Req A');
+        }
+        // 2) User B glides in & immediately finishes 1st! (37.2..41.0s)
+        if (s >= 37.2 && s < 41.0) {
+          const u = invLerp(37.2, 41.0, s);
+          const bx = u < 0.5
+            ? lerp(userX + 110, cpuX - cpuR, ease(u * 2))
+            : lerp(cpuX - cpuR, userX + 110, ease((u - 0.5) * 2));
+          drawRequestDot(ctx, bx, 500, PAL.jade, u < 0.5 ? 'Req B (5ms)' : '✓ 200 OK');
+        }
+        // 3) User C enters (41.2..42.8s)
+        if (s >= 41.2 && s < 42.8) {
+          const u = ease(invLerp(41.2, 42.8, s));
+          drawRequestDot(ctx, lerp(userX + 110, cpuX - cpuR, u), lerp(650, cpuY + 30, u), PAL.indigo, 'Req C');
+        }
+        // 4) DB finishes -> wakes CPU via Socket #7 (53.2..55.3s) -> User C reply exits (57.2..59.2s)
+        if (s >= 53.2 && s < 55.3) {
+          const u = ease(invLerp(53.2, 55.3, s));
+          drawRequestDot(ctx, lerp(extX - 52, cpuX + cpuR, u), lerp(610, cpuY + 16, u), PAL.jade, 'DB Ready (#7)');
+        }
+        if (s >= 57.2 && s < 59.2) {
+          const u = ease(invLerp(57.2, 59.2, s));
+          drawRequestDot(ctx, lerp(cpuX - cpuR, userX + 110, u), lerp(cpuY + 30, 650, u), PAL.jade, '✓ Reply C');
+        }
+        // 5) LLM finishes -> wakes CPU via Socket #5 (59.8..61.1s) -> User A reply exits (62.8..64.8s)
+        if (s >= 59.8 && s < 61.1) {
+          const u = ease(invLerp(59.8, 61.1, s));
+          drawRequestDot(ctx, lerp(extX - 52, cpuX + cpuR, u), lerp(390, cpuY - 16, u), PAL.jade, 'LLM Ready (#5)');
+        }
+        if (s >= 62.8 && s < 64.8) {
+          const u = ease(invLerp(62.8, 64.8, s));
+          drawRequestDot(ctx, lerp(cpuX - cpuR, userX + 110, u), lerp(cpuY - 30, 350, u), PAL.jade, '✓ Reply A');
+        }
+
+        // Persistent Out-of-Order Completion Badges next to each User!
+        if (s >= 41.0) drawText(ctx, '✓ #1 Done', userX - 95, 505, 15.5, PAL.jade, 600, 'right');
+        if (s >= 59.2) drawText(ctx, '✓ #2 Done', userX - 95, 655, 15.5, PAL.jade, 600, 'right');
+        if (s >= 64.6) drawText(ctx, '✓ #3 Done', userX - 95, 355, 15.5, PAL.jade, 600, 'right');
+      }
+
+      ctx.restore();
+    }
+
+    /**
+     * ACT 4 (66.28s -> 83.00s):
+     * 1-Human-User Jarvis Tool-Approval Flow (Exact Cause-and-Effect!):
+     *   1. LLM asks permission ("Run tool?") -> streams prompt to You over open SSE/Socket
+     *   2. `chat` coroutine parks in RAM (`waiting: approved=?`) -> CPU is FREE!
+     *   3. You click `POST /approve (true)` -> hits free CPU -> CPU flips flag & pulls `chat` down from RAM!
+     */
+    function renderSingleUserApprovalAct(ctx, s) {
+      if (s < 65.8 || s > 83.6) return;
+      const alpha = ease(invLerp(66.0, 67.2, s)) * (1 - ease(invLerp(82.1, 83.2, s)));
+      if (alpha <= 0.01) return;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      const youX = 390, cpuX = 960, llmX = 1520, cy = 520, ramY = 215;
+
+      // Open stream line + RAM tether
+      drawLine(ctx, youX + 95, cy - 16, cpuX - 72, cy - 16, rgba(PAL.indigo, 0.55), 2, [6, 5]);
+      drawLine(ctx, youX + 95, cy + 20, cpuX - 72, cy + 20, PAL.faint, 2);
+      drawLine(ctx, cpuX + 72, cy, llmX - 62, cy, PAL.faint, 2);
+
+      // RAM Box above CPU
+      ctx.strokeStyle = PAL.faint;
+      ctx.fillStyle = rgba(PAL.surface, 0.7);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(cpuX - 180, ramY - 46, 360, 96, 16);
+      ctx.fill();
+      ctx.stroke();
+      drawText(ctx, 'RAM', cpuX, ramY - 62, 15, PAL.ash, 500);
+
+      const wakingRam = s >= 78.6 && s <= 81.2;
+      drawLine(ctx, cpuX, ramY + 50, cpuX, cy - 72, wakingRam ? PAL.jade : PAL.faint, wakingRam ? 3 : 2, wakingRam ? null : [6, 6]);
+
+      // Left: You (1 Human User — Jarvis UI)
+      ctx.strokeStyle = PAL.ivory;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(youX - 92, cy - 52, 184, 104, 16);
+      ctx.stroke();
+      drawText(ctx, 'You (Jarvis UI)', youX, cy - 6, 19, PAL.ivory, 500);
+      drawText(ctx, s >= 70.5 && s < 79.0 ? 'Prompt: Allow tool?' : '1 Human User', youX, cy + 22, 14, s >= 70.5 && s < 79.0 ? PAL.indigo : PAL.ash, 500);
+
+      // Right: LLM (Idle while waiting for your permission!)
+      drawExternalDial(ctx, llmX, cy, 50, 'LLM', 'Asked Tool Perm', 1.0, PAL.ash);
+
+      // Step 1 (67.2..71.2s): LLM sends "Allow tool?" -> CPU streams down SSE line to You
+      if (s >= 67.2 && s < 71.2) {
+        const u = invLerp(67.2, 71.2, s);
+        const px = u < 0.45
+          ? lerp(llmX - 56, cpuX + 64, ease(u / 0.45))
+          : lerp(cpuX - 64, youX + 98, ease((u - 0.45) / 0.55));
+        drawRequestDot(ctx, px, cy - 16, PAL.indigo, 'SSE: "Allow tool?"');
+      }
+
+      // Step 2 (71.2..81.0s): `chat` coroutine parks in RAM waiting on `approved` flag!
+      if (s >= 71.2 && s <= 81.2) {
+        const up = ease(invLerp(71.2, 73.4, s));
+        const down = ease(invLerp(79.2, 81.0, s));
+        const lift = clamp01(up - down);
+        const py = lerp(cy, ramY + 2, lift);
+        const approvedNow = s >= 78.6;
+        drawCoroutinePill(
+          ctx, cpuX, py, 276, 56,
+          'chat · awaiting approval',
+          approvedNow ? 'approved = True! Resuming...' : 'approved = ? (~1 KB in RAM)',
+          approvedNow ? PAL.jade : PAL.indigo,
+          wakingRam
+        );
+      }
+
+      // Step 3 (76.2..78.8s): You click `POST /approve` -> hits the FREE CPU -> wakes RAM coroutine!
+      if (s >= 76.2 && s < 78.8) {
+        const u = ease(invLerp(76.2, 78.8, s));
+        drawRequestDot(ctx, lerp(youX + 98, cpuX - 64, u), cy + 20, PAL.jade, 'POST /approve (True)');
+      }
+      if (s >= 81.0 && s < 82.6) {
+        const u = ease(invLerp(81.0, 82.6, s));
+        drawRequestDot(ctx, lerp(cpuX - 64, youX + 98, u), cy - 16, PAL.jade, '✓ Tool Executed!');
+      }
+
+      const cpuLabel = s < 73.4
+        ? 'Streaming Permission Request'
+        : s < 76.2
+          ? 'CPU Free! (Not Deadlocked)'
+          : 'Caught /approve → Waking chat!';
+      drawCpuCircle(ctx, cpuX, cy, 58, s >= 76.2 ? PAL.jade : PAL.ivory, cpuLabel, s * 2.5, false);
+
+      ctx.restore();
+    }
+
+    /**
+     * ACT 5 (83.00s -> 101.184s):
+     * Part A (83.0..92.2s): Minimalist Hardware NIC DMA -> OS Socket epoll/IOCP Cutaway
+     * Part B (92.2..101.18s): Clean Two-Bar Timing Proof (4.0s Blocking vs 2.0s Async)
+     */
+    function renderHardwareAndFinaleAct(ctx, s) {
+      if (s < 82.6) return;
+
+      // Part A: Hardware NIC DMA -> OS Kernel epoll/IOCP -> Uvicorn
+      if (s < 93.0) {
+        const alpha = ease(invLerp(82.8, 84.0, s)) * (1 - ease(invLerp(91.8, 92.9, s)));
+        ctx.save();
+        ctx.globalAlpha = alpha;
+
+        const cy = 490, nicX = 480, osX = 960, uvX = 1440;
+        drawLine(ctx, nicX + 105, cy, osX - 135, cy, PAL.faint, 2);
+        drawLine(ctx, osX + 135, cy, uvX - 66, cy, PAL.faint, 2);
+
+        // NIC DMA Box
+        ctx.strokeStyle = PAL.ivory;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect(nicX - 105, cy - 50, 210, 100, 16); ctx.stroke();
+        drawText(ctx, 'Network Card', nicX, cy - 6, 19, PAL.ivory, 500);
+        drawText(ctx, 'DMA Direct-to-RAM', nicX, cy + 22, 14, PAL.ash, 400);
+
+        // OS Kernel epoll / IOCP Socket Rack
+        ctx.strokeStyle = PAL.indigo;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect(osX - 135, cy - 88, 270, 176, 16); ctx.stroke();
+        drawText(ctx, 'OS Kernel (epoll / IOCP)', osX, cy - 106, 15.5, PAL.ash, 500);
+
+        ['Socket #5 · Queued Bytes', 'Socket #6 · Queued Bytes'].forEach((label, idx) => {
+          const sy = cy - 56 + idx * 62;
+          const active = s >= 85.8 + idx * 0.4;
+          ctx.fillStyle = active ? rgba(PAL.indigo, 0.18) : 'transparent';
+          ctx.strokeStyle = active ? PAL.indigo : PAL.faint;
+          ctx.beginPath(); ctx.roundRect(osX - 110, sy, 220, 46, 10); ctx.fill(); ctx.stroke();
+          drawText(ctx, label, osX, sy + 28, 14.5, active ? PAL.ivory : PAL.ash, 500, 'center', true);
+        });
+
+        drawCpuCircle(ctx, uvX, cy, 56, PAL.jade, 'O(1) Instant Wakeup', s * 2.6, false);
+
+        if (s >= 84.2 && s < 86.2) {
+          const u = ease(invLerp(84.2, 86.0, s));
+          const px = lerp(nicX + 105, osX - 135, u);
+          drawRequestDot(ctx, px, cy - 18, PAL.ivory, '');
+          drawRequestDot(ctx, px, cy + 18, PAL.jade, '');
+        }
+        if (s >= 88.0 && s < 91.2) {
+          const u = ease(invLerp(88.0, 90.8, s));
+          drawRequestDot(ctx, lerp(osX + 135, uvX - 62, u), cy, PAL.jade, 'Ready Bell');
+        }
+
+        ctx.restore();
+      }
+
+      // Part B: Two-Bar Timing Payoff (4.0s Sequential vs 2.0s Async on 1 Thread)
+      if (s >= 92.0) {
+        const alpha = ease(invLerp(92.2, 93.4, s));
+        ctx.save();
+        ctx.globalAlpha = alpha;
+
+        const left = 540, fullW = 880;
+        const simT = clamp01(invLerp(93.2, 98.2, s)) * 4.0;
+
+        drawText(ctx, 'Blocking', left - 40, 396, 20, PAL.coral, 500, 'right');
+        drawText(ctx, '1s + 2s + 1s', left - 40, 422, 14, PAL.ash, 400, 'right', true);
+
+        [
+          { st: 0, d: 1 },
+          { st: 1, d: 2 },
+          { st: 3, d: 1 }
+        ].forEach((seg) => {
+          const x = left + (seg.st / 4) * fullW;
+          const w = (seg.d / 4) * fullW - 8;
+          const p = clamp01((simT - seg.st) / seg.d);
+          ctx.fillStyle = PAL.faint;
+          ctx.beginPath(); ctx.roundRect(x, 380, w, 34, 8); ctx.fill();
+          if (p > 0) {
+            ctx.fillStyle = PAL.coral;
+            ctx.beginPath(); ctx.roundRect(x, 380, w * p, 34, 8); ctx.fill();
+          }
+        });
+        drawText(ctx, `${simT.toFixed(1)}s`, left + fullW + 24, 404, 18, PAL.coral, 600, 'left', true);
+
+        drawText(ctx, 'Async (1 Thread)', left - 40, 560, 20, PAL.jade, 500, 'right');
+        drawText(ctx, '3 RAM Coroutines', left - 40, 586, 14, PAL.ash, 400, 'right');
+
+        [1.0, 2.0, 1.0].forEach((dur, idx) => {
+          const y = 524 + idx * 30;
+          const w = (dur / 4) * fullW - 8;
+          const p = clamp01(simT / dur);
+          ctx.fillStyle = PAL.faint;
+          ctx.beginPath(); ctx.roundRect(left, y, w, 20, 6); ctx.fill();
+          if (p > 0) {
+            ctx.fillStyle = PAL.jade;
+            ctx.beginPath(); ctx.roundRect(left, y, w * p, 20, 6); ctx.fill();
+          }
+        });
+
+        const asyncT = Math.min(2.0, simT);
+        drawText(
+          ctx,
+          simT >= 2.0 ? '2.0s  ✓ Done' : `${asyncT.toFixed(1)}s`,
+          left + fullW * 0.5 + 24,
+          568,
+          19,
+          PAL.jade,
+          600,
+          'left',
+          true
+        );
+
+        ctx.restore();
+      }
+    }
+
+    let captionsVisible = true;
+
+    function renderAt(sec) {
+      const s = clamp(sec, 0, DURATION);
+      const ctx = stage.getContext('2d');
+
+      ctx.fillStyle = PAL.bg;
+      ctx.fillRect(0, 0, 1920, 1080);
+
+      renderMultiUserActs(ctx, s);
+      renderSingleUserApprovalAct(ctx, s);
+      renderHardwareAndFinaleAct(ctx, s);
+
+      if (captionsVisible) {
+        const cue = CUES.find((c) => s >= c.start && s < c.end);
+        if (cue) {
+          const fade = Math.min(invLerp(cue.start, cue.start + 0.3, s), 1 - invLerp(cue.end - 0.3, cue.end, s));
+          drawWrappedCaption(ctx, cue.text, 960, 948, 1380, 36, fade);
+        }
+      }
+    }
+
+    // ============================================================================
+    // 4. SYNCED VOICEOVER + AMBIENT WEB AUDIO ENGINE & MP4 EXPORTER
+    // ============================================================================
+    class SyncedAudioEngine {
+      constructor() {
+        this.ctx = null;
+        this.master = null;
+        this.speaker = null;
+        this.dest = null;
+        this.voiceBuffer = null;
+        this.voiceSource = null;
+        this.muted = false;
+        this.decodingPromise = null;
+        this.playAnchorAudioTime = 0;
+        this.playAnchorOffset = 0;
+        this.lastChimeStep = -1;
+      }
+
+      async init() {
+        if (!this.ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AC();
+          this.master = this.ctx.createGain();
+          this.master.gain.value = 1.0;
+
+          this.speaker = this.ctx.createGain();
+          this.speaker.gain.value = this.muted ? 0 : 1;
+          this.dest = this.ctx.createMediaStreamDestination();
+
+          this.master.connect(this.speaker);
+          this.speaker.connect(this.ctx.destination);
+          this.master.connect(this.dest);
+        }
+        if (this.ctx.state === 'suspended') await this.ctx.resume();
+
+        if (!this.voiceBuffer && VO.wavBase64 && !this.decodingPromise) {
+          this.decodingPromise = (async () => {
+            const bin = atob(VO.wavBase64);
+            const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            this.voiceBuffer = await this.ctx.decodeAudioData(bytes.buffer.slice(0));
+          })();
+        }
+        if (this.decodingPromise) await this.decodingPromise;
+      }
+
+      startFrom(offsetSec) {
+        this.stopVoice();
+        if (!this.ctx) return;
+        this.playAnchorAudioTime = this.ctx.currentTime;
+        this.playAnchorOffset = offsetSec;
+        this.lastChimeStep = Math.floor(offsetSec / 2) - 1;
+
+        if (this.voiceBuffer && offsetSec < this.voiceBuffer.duration) {
+          const src = this.ctx.createBufferSource();
+          const vGain = this.ctx.createGain();
+          vGain.gain.value = 0.96;
+          src.buffer = this.voiceBuffer;
+          src.connect(vGain);
+          vGain.connect(this.master);
+          src.start(0, offsetSec);
+          this.voiceSource = src;
+        }
+      }
+
+      stopVoice() {
+        if (this.voiceSource) {
+          try { this.voiceSource.stop(); } catch (_) {}
+          this.voiceSource.disconnect();
+          this.voiceSource = null;
+        }
+      }
+
+      getExactTime() {
+        if (!this.ctx) return this.playAnchorOffset;
+        return this.playAnchorOffset + (this.ctx.currentTime - this.playAnchorAudioTime);
+      }
+
+      updateAmbient(sec) {
+        if (!this.ctx) return;
+        // Whisper-quiet ambient harmonic bed underneath Bella's voiceover
+        const step = Math.floor(sec / 2);
+        if (step > this.lastChimeStep) {
+          this.lastChimeStep = step;
+          const notes = [220.0, 261.63, 329.63, 293.66];
+          const now = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const g = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(notes[step % notes.length], now);
+          g.gain.setValueAtTime(0.0001, now);
+          g.gain.linearRampToValueAtTime(0.015, now + 0.08);
+          g.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+          osc.connect(g);
+          g.connect(this.master);
+          osc.start(now);
+          osc.stop(now + 1.45);
+        }
+      }
+    }
+
+    // ============================================================================
+    // 5. TRANSPORT CONTROLS & NATIVE 1080p MP4 EXPORT
+    // ============================================================================
+    const stage = document.getElementById('cinemaStage');
+    const playBtn = document.getElementById('playBtn');
+    const actDots = document.getElementById('actDots');
+    const scrub = document.getElementById('scrub');
+    const timeLabel = document.getElementById('timeLabel');
+    const ccBtn = document.getElementById('ccBtn');
+    const muteBtn = document.getElementById('muteBtn');
+    const mp4Btn = document.getElementById('mp4Btn');
+    const saveLink = document.getElementById('saveLink');
+
+    scrub.max = String(DURATION);
+    const audio = new SyncedAudioEngine();
+    let cur = 0;
+    let playing = false;
+    let exporting = false;
+
+    const dotButtons = ACTS.map((act) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'act-dot';
+      b.textContent = act.label;
+      b.addEventListener('click', async () => {
+        if (exporting) return;
+        await audio.init();
+        cur = act.time + 0.02;
+        if (playing) audio.startFrom(cur);
+        renderAt(cur);
+        syncUI();
+      });
+      actDots.appendChild(b);
+      return { b, act };
+    });
+
+    function fmtTime(s) {
+      const tot = Math.floor(clamp(s, 0, DURATION));
+      const m = Math.floor(tot / 60);
+      const r = tot % 60;
+      const totDur = Math.floor(DURATION);
+      return `${m}:${String(r).padStart(2, '0')} / ${Math.floor(totDur / 60)}:${String(totDur % 60).padStart(2, '0')}`;
+    }
+
+    function syncUI() {
+      scrub.value = cur.toFixed(2);
+      timeLabel.textContent = fmtTime(cur);
+      playBtn.textContent = playing ? '⏸ Pause' : '▶ Play';
+      dotButtons.forEach(({ b, act }) => {
+        b.classList.toggle('active', cur >= act.time && cur < act.end);
+      });
+    }
+
+    async function togglePlay() {
+      if (exporting) return;
+      await audio.init();
+      if (cur >= DURATION - 0.05) cur = 0;
+      playing = !playing;
+      if (playing) {
+        audio.startFrom(cur);
+      } else {
+        audio.stopVoice();
+      }
+      syncUI();
+    }
+
+    playBtn.addEventListener('click', togglePlay);
+    stage.addEventListener('click', togglePlay);
+
+    scrub.addEventListener('input', (e) => {
+      if (exporting) return;
+      playing = false;
+      audio.stopVoice();
+      cur = parseFloat(e.target.value);
+      renderAt(cur);
+      syncUI();
+    });
+
+    ccBtn.addEventListener('click', () => {
+      captionsVisible = !captionsVisible;
+      ccBtn.textContent = captionsVisible ? 'CC On' : 'CC Off';
+      renderAt(cur);
+    });
+
+    muteBtn.addEventListener('click', async () => {
+      await audio.init();
+      audio.muted = !audio.muted;
+      if (audio.speaker) audio.speaker.gain.value = audio.muted ? 0 : 1;
+      muteBtn.textContent = audio.muted ? '🔇 Muted' : '🔊 Bella';
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && document.activeElement?.tagName !== 'INPUT') {
+        e.preventDefault();
+        togglePlay();
+      }
+    });
+
+    mp4Btn.addEventListener('click', async () => {
+      if (exporting || typeof MediaRecorder === 'undefined') return;
+      const candidates = [
+        'video/mp4;codecs="avc1.640028,mp4a.40.2"',
+        'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+        'video/mp4;codecs=avc1,opus',
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm'
+      ];
+      const mime = candidates.find((m) => MediaRecorder.isTypeSupported(m));
+      if (!mime) return;
+      const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+
+      await audio.init();
+      exporting = true;
+      playBtn.disabled = true;
+      scrub.disabled = true;
+      mp4Btn.disabled = true;
+      saveLink.style.display = 'none';
+
+      const stream = new MediaStream([
+        ...stage.captureStream(30).getVideoTracks(),
+        ...audio.dest.stream.getAudioTracks()
+      ]);
+      const chunks = [];
+      const rec = new MediaRecorder(stream, {
+        mimeType: mime,
+        videoBitsPerSecond: 10_000_000,
+        audioBitsPerSecond: 192_000
+      });
+
+      rec.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) chunks.push(ev.data); };
+      rec.onstop = () => {
+        const blob = new Blob(chunks, { type: mime });
+        const url = URL.createObjectURL(blob);
+        saveLink.href = url;
+        saveLink.download = `01_async_concurrency.${ext}`;
+        saveLink.textContent = `Save ${ext.toUpperCase()} (${(blob.size / (1024 * 1024)).toFixed(1)} MB)`;
+        saveLink.style.display = 'inline-block';
+        saveLink.click();
+
+        exporting = false;
+        playBtn.disabled = false;
+        scrub.disabled = false;
+        mp4Btn.disabled = false;
+        mp4Btn.textContent = 'Export MP4';
+      };
+
+      cur = 0;
+      renderAt(0);
+      syncUI();
+      rec.start(250);
+      playing = true;
+      audio.startFrom(0);
+
+      const poll = setInterval(() => {
+        mp4Btn.textContent = `Recording ${Math.round((cur / DURATION) * 100)}%`;
+        if (!playing && cur >= DURATION - 0.02) {
+          clearInterval(poll);
+          setTimeout(() => { if (rec.state !== 'inactive') rec.stop(); }, 200);
+        }
+      }, 200);
+    });
+
+    function tick() {
+      if (playing) {
+        cur = audio.getExactTime();
+        if (cur >= DURATION) {
+          cur = DURATION;
+          playing = false;
+          audio.stopVoice();
+        }
+        audio.updateAmbient(cur);
+        renderAt(cur);
+        syncUI();
+      }
+      requestAnimationFrame(tick);
+    }
+
+    renderAt(0);
+    syncUI();
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
