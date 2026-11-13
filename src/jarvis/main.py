@@ -11,11 +11,9 @@ app = FastAPI()
 
 @app.get("/health")
 def get_health() -> HealthResponse:
-    api_status: dict[str, str] = {
+    return HealthResponse(
         "status": "ok",
         "version": "1.0.0",
         "timestamp": datetime.now().isoformat()
-    }
-    
-    return api_status
+    )
 
