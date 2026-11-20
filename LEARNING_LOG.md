@@ -194,3 +194,24 @@ It is a **3-layer handoff** between **Hardware**, the **OS Kernel**, and **Uvico
   - `pydantic-core` (the engine inside `BaseModel`) is written in **Rust**.
   - HuggingFace `tokenizers`, OpenAI `tiktoken`, `Ruff`, and vector DBs like `Qdrant` are all written in **Rust**.
 - **The Modern AI Stack ("Python Cockpit + Rust Engine"):** In production AI, **Python is the control plane** (agent state machines, API servers, model graphs, rapid orchestration), while **Rust/CUDA is the compute plane** (hot loops, tokenizers, validation, inference kernels, often bound directly to Python via `PyO3`).
+
+---
+
+## 6. Pydantic `BaseModel`, FastAPI `HTTP 422`, and Git Hygiene
+
+### Q: What does inheriting from Pydantic's `BaseModel` actually do at runtime?
+- Plain Python classes ignore type hints (`status: str`) at runtime and cannot serialize `datetime` objects to JSON.
+- Inheriting from `pydantic.BaseModel` (powered by Rust's `pydantic-core`) combines TypeScript `interface` + runtime `Zod` + `JSON.stringify`:
+  1. Validates every field's existence, type, and `Field(...)` constraints (e.g., `Field(min_length=1)`) at runtime.
+  2. Parses incoming JSON strings (e.g., ISO timestamps) into real Python types (`datetime`).
+  3. Serializes outgoing Python objects (`datetime.now(timezone.utc)`) into ISO-8601 JSON strings automatically.
+  4. Auto-generates the OpenAPI schema at `/docs`.
+
+### Q: What happens when incoming `POST` JSON fails a `BaseModel` rule like `Field(min_length=1)`?
+- FastAPI intercepts the request via ASGI `receive()`, runs Pydantic validation **before** calling your route handler function, and immediately returns **`HTTP 422 Unprocessable Content`** with a structured `detail` array:
+  - `detail[0]["type"] == "string_too_short"` (machine-readable Pydantic v2 error code)
+  - `detail[0]["msg"] == "String should have at least 1 character"`
+
+### Q: Why does Git on Windows warn `LF will be replaced by CRLF`, and does splitting commits hurt AI reviews?
+- **`LF` (`\n`, 1 byte) vs. `CRLF` (`\r\n`, 2 bytes):** Unix uses `LF`; Windows uses `CRLF`. With `core.autocrlf=true`, Git stores clean `LF` inside the repository and converts working-tree files on checkout. The warning is harmless.
+- **Atomic Commits & AI Reviews:** Splitting commits by logical concern (and always running `uv run pytest` *before* `git commit`) helps both humans and AI reviewers by preventing context dilution and making `git log` / `git bisect` surgical.
