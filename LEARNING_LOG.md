@@ -168,3 +168,29 @@ It is a **3-layer handoff** between **Hardware**, the **OS Kernel**, and **Uvico
   2. The LLM replies *"I want to run `delete_files`—ask permission."*
   3. Uvicorn streams `"Allow tool?"` down the open SSE response to your UI, then your `chat` coroutine hits `await approval_event.wait()` and **parks in RAM** (`approved = ?`), freeing the CPU!
   4. You click **Approve** in the UI → sends a separate quick request `POST /approve (True)` → hits the **free CPU** → flips `approval_event.set()` → wakes the `chat` coroutine from RAM to run the tool and stream the final answer!
+
+---
+
+## 5. Architecture & Systems Languages
+
+### Q: In Node.js/TypeScript, we split `routes/`, `controllers/`, and `types/` into separate files. Why did we start in `main.py`, and how does FastAPI structure them?
+- We started in `main.py` only so we wouldn't create 4 empty folders for a 10-line app (avoiding premature boilerplate before seeing the need).
+- As soon as we have multiple schemas and routes (Milestone 2 — Step 3), FastAPI splits responsibilities cleanly just like Node.js/TypeScript:
+
+| Responsibility | Node.js + TypeScript | Python + FastAPI (`src/jarvis/`) |
+| :--- | :--- | :--- |
+| **Types / Interfaces & Validation** | `types/*.ts` + `zod` schemas | **`schemas/`** (Pydantic `BaseModel` classes) |
+| **Route Definitions** | `routes/*.ts` (`express.Router()`) | **`api/` or `routers/`** (`APIRouter()`) |
+| **Controllers & Business Logic** | `controllers/*.ts` + `services/*.ts` | **`api/`** (thin HTTP handlers) + **`services/`** (pure Python business logic, LLM, memory) |
+| **App Entry Point** | `app.ts` / `server.ts` | **`main.py`** (creates `FastAPI()` and mounts routers via `app.include_router()`) |
+
+### Q: Why do leaders like Elon Musk call Rust the future language of AI engineering—and why are we using Python too?
+- **Why Python hits a wall at the hardware layer:** Python is dynamically interpreted; a single integer costs 28 bytes on the heap, and raw Python loops are 50x–100x slower than native machine code.
+- **Why Rust is taking over the AI systems layer (replacing C/C++):**
+  1. **Native C/C++ speed with zero Garbage Collector pauses:** Essential for real-time robotics (Tesla FSD/Optimus), high-throughput LLM inference servers, and streaming audio/video where a 10ms GC pause is unacceptable.
+  2. **Compile-time Memory & Thread Safety (The Borrow Checker):** Prevents buffer overflows, use-after-free crashes, and multi-threaded data races at compile time without runtime overhead.
+- **You are ALREADY running Rust inside this repo:**
+  - `uv` (your package manager) is written in **Rust**.
+  - `pydantic-core` (the engine inside `BaseModel`) is written in **Rust**.
+  - HuggingFace `tokenizers`, OpenAI `tiktoken`, `Ruff`, and vector DBs like `Qdrant` are all written in **Rust**.
+- **The Modern AI Stack ("Python Cockpit + Rust Engine"):** In production AI, **Python is the control plane** (agent state machines, API servers, model graphs, rapid orchestration), while **Rust/CUDA is the compute plane** (hot loops, tokenizers, validation, inference kernels, often bound directly to Python via `PyO3`).
