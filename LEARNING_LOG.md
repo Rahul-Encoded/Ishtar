@@ -215,3 +215,7 @@ It is a **3-layer handoff** between **Hardware**, the **OS Kernel**, and **Uvico
 ### Q: Why does Git on Windows warn `LF will be replaced by CRLF`, and does splitting commits hurt AI reviews?
 - **`LF` (`\n`, 1 byte) vs. `CRLF` (`\r\n`, 2 bytes):** Unix uses `LF`; Windows uses `CRLF`. With `core.autocrlf=true`, Git stores clean `LF` inside the repository and converts working-tree files on checkout. The warning is harmless.
 - **Atomic Commits & AI Reviews:** Splitting commits by logical concern (and always running `uv run pytest` *before* `git commit`) helps both humans and AI reviewers by preventing context dilution and making `git log` / `git bisect` surgical.
+
+### Q: What does `app.include_router(chat_router, prefix="/api/v1")` do to route URLs?
+- Just like `app.use("/api/v1", chatRouter)` in Express.js, `prefix="/api/v1"` prepends `/api/v1` to every route inside `chat_router`.
+- `@router.post("/chat")` moves to `/api/v1/chat`, and any test or client still calling the old `/chat` URL receives `404 Not Found`.
